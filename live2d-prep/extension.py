@@ -3,6 +3,21 @@ from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLab
 import os
 import time
 import traceback
+import datetime
+
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_LOG_PATH = os.path.join(_SCRIPT_DIR, "live2d-prep.log")
+
+
+def log(msg):
+    line = f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}"
+    try:
+        with open(_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
+    print(line)
 
 
 def visibleTopLevelNodes(doc):
@@ -46,7 +61,7 @@ def addGroupWithSameName(doc, node):
         if parent is not None:
             parent.setName(node.name())
     except Exception as e:
-        print(f"Failed to add group: {e}")
+        log(f"Failed to add group: {e}")
 
 
 def removeMergedSuffix(node):
@@ -63,7 +78,7 @@ def mergeLeaf(doc, node):
         doc.refreshProjection()
         QApplication.processEvents()
     except Exception as e:
-        print(f"Failed to merge: {e}")
+        log(f"Failed to merge: {e}")
 
 
 def sanitizeFilename(name):
@@ -140,10 +155,10 @@ def save_as_psd(node):
         QApplication.processEvents()
 
         if not saved or not os.path.exists(outfile):
-            print(f"save failed/not found: {outfile}")
+            log(f"save failed/not found: {outfile}")
             return False
 
-        print(f"Saved: {outfile}")
+            log(f"Saved: {outfile}")
         return True
 
     finally:
@@ -153,7 +168,7 @@ def save_as_psd(node):
             if 'export_doc' in locals() and export_doc is not None:
                 export_doc.close()
         except Exception as e:
-            print(f"close doc err: {e}")
+            log(f"close doc err: {e}")
 
         time.sleep(0.05)
         QApplication.processEvents()
@@ -165,7 +180,7 @@ def save_as_psd(node):
                 application.setActiveDocument(currentDoc)
             currentDoc.setActiveNode(node)
         except Exception as e:
-            print(f"restore doc err: {e}")
+            log(f"restore doc err: {e}")
 
         QApplication.processEvents()
         killExtraViews(window)
@@ -247,7 +262,7 @@ class Live2DExporterExtension(Extension):
                     forFlatGroupLeafs(currentDoc, node, addGroupWithSameName)
                 except Exception as e:
                     errors.append(f"Error grouping layers in '{node.name()}': {e}")
-                    print(traceback.format_exc())
+                    log(traceback.format_exc())
 
             QApplication.processEvents()
 
@@ -256,7 +271,7 @@ class Live2DExporterExtension(Extension):
                     forFlatGroupLeafs(currentDoc, node, mergeLeaf)
                 except Exception as e:
                     errors.append(f"Error merging layers in '{node.name()}': {e}")
-                    print(traceback.format_exc())
+                    log(traceback.format_exc())
 
             QApplication.processEvents()
 
@@ -265,7 +280,7 @@ class Live2DExporterExtension(Extension):
                     forLeafs(node, removeMergedSuffix)
                 except Exception as e:
                     errors.append(f"Error cleaning names in '{node.name()}': {e}")
-                    print(traceback.format_exc())
+                    log(traceback.format_exc())
 
             QApplication.processEvents()
 
@@ -277,7 +292,7 @@ class Live2DExporterExtension(Extension):
                         errors.append(f"Failed to export '{node.name()}'")
                 except Exception as e:
                     errors.append(f"Error exporting '{node.name()}': {e}")
-                    print(traceback.format_exc())
+                    log(traceback.format_exc())
 
                 QApplication.processEvents()
 
@@ -286,7 +301,7 @@ class Live2DExporterExtension(Extension):
 
         except Exception as e:
             errors.append(f"Unexpected error: {e}")
-            print(traceback.format_exc())
+            log(traceback.format_exc())
 
         msg_parts = []
         if success_count > 0:
