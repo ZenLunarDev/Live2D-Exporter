@@ -79,6 +79,9 @@ def save_as_psd(node):
     if currentDoc is None or window is None or node is None:
         return False
 
+    export_doc = None
+    export_view = None
+
     try:
         currentDoc.setActiveNode(node)
         application.action("edit_copy").trigger()
@@ -99,7 +102,7 @@ def save_as_psd(node):
             currentDoc.resolution()
         )
 
-        window.addView(export_doc)
+        export_view = window.addView(export_doc)
         application.setActiveDocument(export_doc)
         QApplication.processEvents()
 
@@ -127,6 +130,7 @@ def save_as_psd(node):
 
             export_doc.waitForDone()
             QApplication.processEvents()
+            QApplication.processEvents()
 
             if not os.path.exists(outfile):
                 print(f"File does not exist after save: {outfile}")
@@ -138,17 +142,36 @@ def save_as_psd(node):
         return False
 
     finally:
+        QApplication.processEvents()
+        QApplication.processEvents()
+
         try:
-            if 'export_doc' in locals():
+            if export_view is not None:
+                export_view.close()
+                export_view = None
+        except Exception as e:
+            print(f"Error closing export view: {e}")
+
+        QApplication.processEvents()
+        QApplication.processEvents()
+
+        try:
+            if export_doc is not None:
                 export_doc.close()
+                export_doc = None
         except Exception as e:
             print(f"Error closing export doc: {e}")
+
+        QApplication.processEvents()
+        QApplication.processEvents()
 
         try:
             application.setActiveDocument(currentDoc)
             currentDoc.setActiveNode(node)
         except Exception as e:
             print(f"Error restoring document: {e}")
+
+        QApplication.processEvents()
 
 
 class Live2DExporterExtension(Extension):
@@ -208,12 +231,13 @@ class Live2DExporterExtension(Extension):
             self.showErrorWindow("Current document has not been saved. Please save it first.")
             return
 
-        node_names = [n.name() for n in visibleTopLevelNodes(currentDoc)]
+        visible_nodes = list(visibleTopLevelNodes(currentDoc))
+        node_names = [n.name() for n in visible_nodes]
         if len(node_names) != len(set(node_names)):
             self.showErrorWindow("Duplicate top-level layer names detected. Each top-level layer must have a unique name.")
             return
 
-        if len(node_names) == 0:
+        if len(visible_nodes) == 0:
             self.showErrorWindow("No visible top-level layers found to export.")
             return
 
@@ -221,28 +245,34 @@ class Live2DExporterExtension(Extension):
         success_count = 0
 
         try:
-            for node in visibleTopLevelNodes(currentDoc):
+            for node in visible_nodes:
                 try:
                     forFlatGroupLeafs(currentDoc, node, addGroupWithSameName)
                 except Exception as e:
                     errors.append(f"Error grouping layers in '{node.name()}': {e}")
                     print(traceback.format_exc())
 
-            for node in visibleTopLevelNodes(currentDoc):
+            QApplication.processEvents()
+
+            for node in visible_nodes:
                 try:
                     forFlatGroupLeafs(currentDoc, node, mergeLeaf)
                 except Exception as e:
                     errors.append(f"Error merging layers in '{node.name()}': {e}")
                     print(traceback.format_exc())
 
-            for node in visibleTopLevelNodes(currentDoc):
+            QApplication.processEvents()
+
+            for node in visible_nodes:
                 try:
                     forLeafs(node, removeMergedSuffix)
                 except Exception as e:
                     errors.append(f"Error cleaning names in '{node.name()}': {e}")
                     print(traceback.format_exc())
 
-            for node in visibleTopLevelNodes(currentDoc):
+            QApplication.processEvents()
+
+            for node in visible_nodes:
                 try:
                     if save_as_psd(node):
                         success_count += 1
@@ -251,6 +281,8 @@ class Live2DExporterExtension(Extension):
                 except Exception as e:
                     errors.append(f"Error exporting '{node.name()}': {e}")
                     print(traceback.format_exc())
+
+                QApplication.processEvents()
 
             currentDoc.setModified(False)
             QApplication.processEvents()
