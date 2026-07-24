@@ -1,4 +1,4 @@
-# Live2D Prep
+# Live2D Exporter
 
 Krita plugin that prepares documents for Live2D export.
 
