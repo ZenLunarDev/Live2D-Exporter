@@ -1,6 +1,5 @@
 from krita import Krita, Extension, InfoObject
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QApplication, QMessageBox
-from PyQt5 import QtCore
 import os
 import time
 import datetime
@@ -155,31 +154,24 @@ class _SaveTask:
             self.doc.setActiveNode(self.node)
             log("save AFTER setActiveDocument current")
 
-            log("save BEFORE timer")
-            QtCore.QTimer.singleShot(100, self._save)
-        except Exception as e:
-            log(f"save EXCEPTION prepare: {e}")
-            log(traceback.format_exc())
-            self.finished = True
-            self.success = False
+            log("save BEFORE delay")
+            for _ in range(10):
+                time.sleep(0.03)
+                QApplication.processEvents()
+            log("save AFTER delay")
 
-    def _save(self):
-        if self.export_doc is None:
-            self.finished = True
-            self.success = False
-            return
-
-        try:
+            log("save BEFORE saveAs")
             saved = self.export_doc.saveAs(self.outfile)
             self.export_doc.waitForDone()
-            log(f"save DONE node={self.node.name()} saved={saved} exists={os.path.exists(self.outfile)}")
+            QApplication.processEvents()
+            log(f"save AFTER saveAs saved={saved} exists={os.path.exists(self.outfile)}")
 
             if saved and os.path.exists(self.outfile):
                 self.success = True
             else:
                 self.success = False
         except Exception as e:
-            log(f"save EXCEPTION saveAs: {e}")
+            log(f"save EXCEPTION: {e}")
             log(traceback.format_exc())
             self.success = False
         finally:
