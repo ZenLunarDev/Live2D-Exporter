@@ -1,3 +1,7 @@
+# Copyright (c) 2023 Meptl
+# Copyright (c) 2026 กรมท
+# SPDX-License-Identifier: MIT
+
 from krita import Krita, Extension, InfoObject
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QApplication
 import os
