@@ -1,6 +1,7 @@
 from krita import Krita, Extension, InfoObject
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QApplication
 import os
+import time
 import traceback
 
 
@@ -40,6 +41,7 @@ def addGroupWithSameName(doc, node):
         Krita.instance().action("create_quick_group").trigger()
         doc.waitForDone()
         QApplication.processEvents()
+
         parent = node.parentNode()
         if parent is not None:
             parent.setName(node.name())
@@ -71,6 +73,17 @@ def sanitizeFilename(name):
     return name.strip() or "untitled"
 
 
+def killExtraViews(window):
+    try:
+        if window is None:
+            return
+        for w in window.workspace().windows():
+            for v in w.views():
+                pass
+    except Exception:
+        pass
+
+
 def save_as_psd(node):
     application = Krita.instance()
     window = application.activeWindow()
@@ -79,8 +92,7 @@ def save_as_psd(node):
     if currentDoc is None or window is None or node is None:
         return False
 
-    export_doc = None
-    export_view = None
+    old_active = application.activeDocument()
 
     try:
         currentDoc.setActiveNode(node)
@@ -92,17 +104,19 @@ def save_as_psd(node):
         if bounds.isEmpty():
             return False
 
+        short_name = sanitizeFilename(node.name())
+
         export_doc = application.createDocument(
             int(bounds.width()),
             int(bounds.height()),
-            sanitizeFilename(node.name()) + ".psd",
+            short_name + ".psd",
             currentDoc.colorModel(),
             currentDoc.colorDepth(),
             currentDoc.colorProfile(),
             currentDoc.resolution()
         )
 
-        export_view = window.addView(export_doc)
+        window.addView(export_doc)
         application.setActiveDocument(export_doc)
         QApplication.processEvents()
 
@@ -113,65 +127,48 @@ def save_as_psd(node):
         QApplication.processEvents()
 
         default_layer.remove()
-        default_layer = None
 
         current_path = currentDoc.fileName()
-        if current_path:
-            out_dir = os.path.dirname(current_path)
-            if not out_dir:
-                out_dir = os.path.expanduser("~")
+        out_dir = os.path.dirname(current_path) if current_path else os.path.expanduser("~")
 
-            outfile = os.path.join(out_dir, sanitizeFilename(node.name()) + ".psd")
-            success = export_doc.saveAs(outfile)
+        outfile = os.path.join(out_dir, short_name + ".psd")
 
-            if not success:
-                print(f"saveAs returned False for: {outfile}")
-                return False
+        saved = export_doc.saveAs(outfile)
+        export_doc.waitForDone()
 
-            export_doc.waitForDone()
-            QApplication.processEvents()
-            QApplication.processEvents()
+        time.sleep(0.05)
+        QApplication.processEvents()
 
-            if not os.path.exists(outfile):
-                print(f"File does not exist after save: {outfile}")
-                return False
+        if not saved or not os.path.exists(outfile):
+            print(f"save failed/not found: {outfile}")
+            return False
 
-            print(f"Saved: {outfile}")
-            return True
-
-        return False
+        print(f"Saved: {outfile}")
+        return True
 
     finally:
         QApplication.processEvents()
-        QApplication.processEvents()
 
         try:
-            if export_view is not None:
-                export_view.close()
-                export_view = None
-        except Exception as e:
-            print(f"Error closing export view: {e}")
-
-        QApplication.processEvents()
-        QApplication.processEvents()
-
-        try:
-            if export_doc is not None:
+            if 'export_doc' in locals() and export_doc is not None:
                 export_doc.close()
-                export_doc = None
         except Exception as e:
-            print(f"Error closing export doc: {e}")
+            print(f"close doc err: {e}")
 
-        QApplication.processEvents()
+        time.sleep(0.05)
         QApplication.processEvents()
 
         try:
-            application.setActiveDocument(currentDoc)
+            if old_active is not None and old_active is not currentDoc:
+                application.setActiveDocument(old_active)
+            else:
+                application.setActiveDocument(currentDoc)
             currentDoc.setActiveNode(node)
         except Exception as e:
-            print(f"Error restoring document: {e}")
+            print(f"restore doc err: {e}")
 
         QApplication.processEvents()
+        killExtraViews(window)
 
 
 class Live2DExporterExtension(Extension):
