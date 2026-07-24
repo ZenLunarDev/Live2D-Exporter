@@ -1,29 +1,29 @@
-# Live2D Prep plugin
+# Live2D Prep
 
-Krita plugin that prepares a document for use in Live2D.
+Krita plugin that prepares documents for Live2D export.
 
-It does the following:
-* Merges all layers that consist of only paint layers whilst maintaining group heirarchy
-* Saves every visible top-level node into a psd file of the same name
-
-A project with the following layer heirarchy where lineart and fill colors are
-separate layers:
-
-![](./pics/pre-example.png)
-
-
-This plugin will produce a BasedLIZ.psd with the following:
-
-![](./pics/post-example.png)
-
-
-The grouping is useful for defining "Parts" in Live2D.
-
+☺ Merges all layers that consist of only paint layers while maintaining group hierarchy
+☺ Saves each visible top-level node into a conceptually matching PSD file
 
 ## Usage
-Navigate to `Tools > Scripts > Live2D Export`.
+
+Navigate to ☞ Tools › Scripts › Live2D Export.
 
 ## Installation
-See the
-[Krita documentation](https://docs.krita.org/en/user_manual/python_scripting/install_custom_python_plugin.html)
-on how to install Krita plugins.
+
+See the Krita documentation on how to install custom Python plugins.
+
+## Requirements
+
+- Krita 4.x or later
+- PyQt5 (bundled with Krita)
+
+## Output
+
+Exported files are saved in the same folder as the current document, using sanitized top-level layer names as filenames.
+
+## Troubleshooting
+
+- Ensure your document is saved before exporting.
+- Avoid duplicate top-level layer names.
+- Ensure at least one top-level layer is visible.
