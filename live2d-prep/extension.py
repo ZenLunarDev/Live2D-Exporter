@@ -1,26 +1,28 @@
 from krita import Krita, Extension, InfoObject
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel
+from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QApplication
 import os
 
 def visibleTopLevelNodes(doc):
+    if doc is None:
+        return []
     for node in doc.topLevelNodes():
         if node.visible():
             yield node
 
 
-def forFlatGroupLeafs(node, func):
+def forFlatGroupLeafs(doc, node, func):
     if node.type() != "grouplayer":
         return
 
     has_group = False
     for n in node.childNodes():
         if n.type() == "grouplayer":
-            forFlatGroupLeafs(n, func)
+            forFlatGroupLeafs(doc, n, func)
             has_group = True
 
     if not has_group:
-        Krita.instance().activeDocument().setActiveNode(node)
-        func(node)
+        doc.setActiveNode(node)
+        func(doc, node)
 
 
 def forLeafs(node, func):
@@ -31,40 +33,44 @@ def forLeafs(node, func):
             forLeafs(n, func)
 
 
-def addGroupWithSameName(node):
-    """
-    Adds the node into a group of the same name.
-
-    We do this to maintain the group heirarchy (which is useful in Live2D) and
-    to have better naming. In Krita 5.2+ there is an option to not add the
-    "Merged" suffix to merged groups, but this works without user intervention.
-    """
+def addGroupWithSameName(doc, node):
     Krita.instance().action("create_quick_group").trigger()
-    Krita.instance().activeDocument().waitForDone()
+    doc.waitForDone()
     node.parentNode().setName(node.name())
 
 
 def removeMergedSuffix(node):
-    """
-    Removes the "Merged" suffix from the node name.
-    """
     if node.name().endswith(" Merged"):
         node.setName(node.name()[:-7])
+
+
+def mergeLeaf(doc, node):
+    Krita.instance().action("merge_layer").trigger()
+    doc.waitForDone()
+    doc.refreshProjection()
+    QApplication.processEvents()
 
 
 def save_as_psd(node):
     application = Krita.instance()
     window = application.activeWindow()
     currentDoc = application.activeDocument()
-    currentView = window.activeView()
 
-    currentView.setVisible()
-    application.setActiveDocument(currentDoc)
+    if currentDoc is None or window is None:
+        return
+
+    currentView = window.activeView()
     currentDoc.setActiveNode(node)
     application.action("edit_copy").trigger()
+    currentDoc.waitForDone()
+
+    bounds = node.bounds()
+    if bounds.isEmpty():
+        return
 
     newDoc = application.createDocument(
-        node.bounds().width(), node.bounds().height(),
+        int(bounds.width()),
+        int(bounds.height()),
         node.name() + ".psd",
         currentDoc.colorModel(),
         currentDoc.colorDepth(),
@@ -76,16 +82,17 @@ def save_as_psd(node):
     default_layer = newDoc.topLevelNodes()[0]
     application.action("edit_paste").trigger()
     default_layer.remove()
-    Krita.instance().activeDocument().waitForDone()
+    newDoc.waitForDone()
     newDoc.refreshProjection()
 
-    outfile = os.path.join(os.path.dirname(currentDoc.fileName()),
-                           node.name() + ".psd")
-    newDoc.saveAs(outfile)
-    print(f'Saving {outfile}')
+    current_path = currentDoc.fileName()
+    if current_path:
+        outfile = os.path.join(os.path.dirname(current_path),
+                               node.name() + ".psd")
+        newDoc.saveAs(outfile)
+        print(f'Saving {outfile}')
     newDoc.close()
 
-    currentView.setVisible()
     application.setActiveDocument(currentDoc)
     currentDoc.setActiveNode(node)
 
@@ -123,23 +130,28 @@ class Live2DExporterExtension(Extension):
         application = Krita.instance()
         currentDoc = application.activeDocument()
 
+        if currentDoc is None:
+            self.showErrorWindow("No active document found.")
+            return
+
         if currentDoc.modified():
             self.showErrorWindow("Current document has unsaved changes. Aborting operation.")
             return
 
-        # Check for name conflicts.
-        node_names = [ n.name() for n in visibleTopLevelNodes(currentDoc) ]
+        if currentDoc.fileName() is None:
+            self.showErrorWindow("Current document has not been saved. Please save it first.")
+            return
+
+        node_names = [n.name() for n in visibleTopLevelNodes(currentDoc)]
         if len(node_names) != len(set(node_names)):
             self.showErrorWindow("There are multiple top-level layers that share a name. Aborting operation.")
-
-
-        # Merging whilst editting groups was having issues with what the "activeNode"
-        # resolved to. So we iterate multiple times over the node tree.
-        for node in visibleTopLevelNodes(currentDoc):
-            forFlatGroupLeafs(node, addGroupWithSameName)
+            return
 
         for node in visibleTopLevelNodes(currentDoc):
-            forFlatGroupLeafs(node, lambda n: Krita.instance().action("merge_layer").trigger())
+            forFlatGroupLeafs(currentDoc, node, addGroupWithSameName)
+
+        for node in visibleTopLevelNodes(currentDoc):
+            forFlatGroupLeafs(currentDoc, node, mergeLeaf)
 
         for node in visibleTopLevelNodes(currentDoc):
             forLeafs(node, removeMergedSuffix)
@@ -147,8 +159,4 @@ class Live2DExporterExtension(Extension):
         for node in visibleTopLevelNodes(currentDoc):
             save_as_psd(node)
 
-        # Reopen the document so all changes are lost.
-        # Setting the modified flag, prevents autosave/discard changes dialog.
-        newDoc = application.openDocument(currentDoc.fileName())
-        Krita.instance().activeWindow().addView(newDoc)
         currentDoc.setModified(False)
