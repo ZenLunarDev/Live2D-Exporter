@@ -1,9 +1,10 @@
 from krita import Krita, Extension, InfoObject
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QApplication
+from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QApplication, QMessageBox
+from PyQt5 import QtCore
 import os
 import time
-import traceback
 import datetime
+import traceback
 
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -11,7 +12,7 @@ _LOG_PATH = os.path.join(_SCRIPT_DIR, "live2d-prep.log")
 
 
 def log(msg):
-    line = f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}"
+    line = f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')}] {msg}"
     try:
         with open(_LOG_PATH, "a", encoding="utf-8") as f:
             f.write(line + "\n")
@@ -55,13 +56,8 @@ def addGroupWithSameName(doc, node):
     try:
         Krita.instance().action("create_quick_group").trigger()
         doc.waitForDone()
-        QApplication.processEvents()
-
-        parent = node.parentNode()
-        if parent is not None:
-            parent.setName(node.name())
     except Exception as e:
-        log(f"Failed to add group: {e}")
+        log(f"addGroup ERROR: {e}")
 
 
 def removeMergedSuffix(node):
@@ -76,9 +72,8 @@ def mergeLeaf(doc, node):
         Krita.instance().action("merge_layer").trigger()
         doc.waitForDone()
         doc.refreshProjection()
-        QApplication.processEvents()
     except Exception as e:
-        log(f"Failed to merge: {e}")
+        log(f"merge ERROR: {e}")
 
 
 def sanitizeFilename(name):
@@ -88,102 +83,121 @@ def sanitizeFilename(name):
     return name.strip() or "untitled"
 
 
-def killExtraViews(window):
-    try:
-        if window is None:
+class _SaveTask:
+    def __init__(self, doc, node, outfile):
+        self.doc = doc
+        self.node = node
+        self.outfile = outfile
+        self.export_doc = None
+        self.export_view = None
+        self.finished = False
+        self.success = False
+
+    def run(self):
+        if self.doc is None or self.node is None or not self.outfile:
+            self.finished = True
+            self.success = False
             return
-        for w in window.workspace().windows():
-            for v in w.views():
-                pass
-    except Exception:
-        pass
-
-
-def save_as_psd(node):
-    application = Krita.instance()
-    window = application.activeWindow()
-    currentDoc = application.activeDocument()
-
-    if currentDoc is None or window is None or node is None:
-        return False
-
-    old_active = application.activeDocument()
-
-    try:
-        currentDoc.setActiveNode(node)
-        application.action("edit_copy").trigger()
-        currentDoc.waitForDone()
-        QApplication.processEvents()
-
-        bounds = node.bounds()
-        if bounds.isEmpty():
-            return False
-
-        short_name = sanitizeFilename(node.name())
-
-        export_doc = application.createDocument(
-            int(bounds.width()),
-            int(bounds.height()),
-            short_name + ".psd",
-            currentDoc.colorModel(),
-            currentDoc.colorDepth(),
-            currentDoc.colorProfile(),
-            currentDoc.resolution()
-        )
-
-        window.addView(export_doc)
-        application.setActiveDocument(export_doc)
-        QApplication.processEvents()
-
-        default_layer = export_doc.topLevelNodes()[0]
-        application.action("edit_paste").trigger()
-        export_doc.waitForDone()
-        export_doc.refreshProjection()
-        QApplication.processEvents()
-
-        default_layer.remove()
-
-        current_path = currentDoc.fileName()
-        out_dir = os.path.dirname(current_path) if current_path else os.path.expanduser("~")
-
-        outfile = os.path.join(out_dir, short_name + ".psd")
-
-        saved = export_doc.saveAs(outfile)
-        export_doc.waitForDone()
-
-        time.sleep(0.05)
-        QApplication.processEvents()
-
-        if not saved or not os.path.exists(outfile):
-            log(f"save failed/not found: {outfile}")
-            return False
-
-            log(f"Saved: {outfile}")
-        return True
-
-    finally:
-        QApplication.processEvents()
 
         try:
-            if 'export_doc' in locals() and export_doc is not None:
-                export_doc.close()
+            bounds = self.node.bounds()
+            if bounds.isEmpty():
+                log(f"save SKIP empty bounds node={self.node.name()}")
+                self.finished = True
+                self.success = False
+                return
+
+            width = int(bounds.width())
+            height = int(bounds.height())
+            log(f"save START node={self.node.name()} {width}x{height}")
+
+            log("save BEFORE createDocument")
+            self.export_doc = Krita.instance().createDocument(
+                width,
+                height,
+                self.node.name(),
+                self.doc.colorModel(),
+                self.doc.colorDepth(),
+                self.doc.colorProfile(),
+                self.doc.resolution(),
+            )
+            log("save AFTER createDocument")
+
+            log("save BEFORE addView")
+            view = Krita.instance().activeWindow().addView(self.export_doc)
+            self.export_view = view
+            log("save AFTER addView")
+
+            log("save BEFORE setActiveDocument export")
+            Krita.instance().setActiveDocument(self.export_doc)
+            log("save AFTER setActiveDocument export")
+
+            log("save BEFORE copy")
+            self.doc.setActiveNode(self.node)
+            Krita.instance().action("edit_copy").trigger()
+            self.doc.waitForDone()
+            log("save AFTER copy")
+
+            log("save BEFORE paste")
+            Krita.instance().action("edit_paste").trigger()
+            self.export_doc.waitForDone()
+            self.export_doc.refreshProjection()
+            log("save AFTER paste")
+
+            log("save BEFORE remove default layer")
+            root_nodes = self.export_doc.topLevelNodes()
+            if root_nodes:
+                root_nodes[0].remove()
+            log("save AFTER remove default layer")
+
+            log("save BEFORE setActiveDocument current")
+            Krita.instance().setActiveDocument(self.doc)
+            self.doc.setActiveNode(self.node)
+            log("save AFTER setActiveDocument current")
+
+            log("save BEFORE timer")
+            QtCore.QTimer.singleShot(100, self._save)
         except Exception as e:
-            log(f"close doc err: {e}")
+            log(f"save EXCEPTION prepare: {e}")
+            log(traceback.format_exc())
+            self.finished = True
+            self.success = False
 
-        time.sleep(0.05)
-        QApplication.processEvents()
+    def _save(self):
+        if self.export_doc is None:
+            self.finished = True
+            self.success = False
+            return
 
         try:
-            if old_active is not None and old_active is not currentDoc:
-                application.setActiveDocument(old_active)
+            saved = self.export_doc.saveAs(self.outfile)
+            self.export_doc.waitForDone()
+            log(f"save DONE node={self.node.name()} saved={saved} exists={os.path.exists(self.outfile)}")
+
+            if saved and os.path.exists(self.outfile):
+                self.success = True
             else:
-                application.setActiveDocument(currentDoc)
-            currentDoc.setActiveNode(node)
+                self.success = False
         except Exception as e:
-            log(f"restore doc err: {e}")
-
-        QApplication.processEvents()
-        killExtraViews(window)
+            log(f"save EXCEPTION saveAs: {e}")
+            log(traceback.format_exc())
+            self.success = False
+        finally:
+            try:
+                if self.export_view is not None:
+                    self.export_view.close()
+            except Exception:
+                pass
+            try:
+                if self.export_doc is not None:
+                    self.export_doc.close()
+            except Exception:
+                pass
+            self.export_doc = None
+            self.export_view = None
+            Krita.instance().setActiveDocument(self.doc)
+            self.doc.setActiveNode(self.node)
+            self.finished = True
 
 
 class Live2DExporterExtension(Extension):
@@ -194,37 +208,21 @@ class Live2DExporterExtension(Extension):
         pass
 
     def createActions(self, window):
-        action = window.createAction("live2d_export",
-                                     "Live2D Export",
-                                     "tools/scripts")
+        action = window.createAction("live2d_export", "Live2D Export", "tools/scripts")
         action.triggered.connect(self.live2d_export)
 
     def showErrorWindow(self, message):
-        dialog = QDialog()
+        dialog = QMessageBox()
+        dialog.setIcon(QMessageBox.Critical)
         dialog.setWindowTitle("Operation Failed")
-        layout = QVBoxLayout()
-        label = QLabel()
-        label.setText(message)
-        label.setWordWrap(True)
-        layout.addWidget(label)
-        button = QPushButton("OK")
-        button.clicked.connect(dialog.close)
-        layout.addWidget(button)
-        dialog.setLayout(layout)
+        dialog.setText(message)
         dialog.exec_()
 
     def showInfoWindow(self, message):
-        dialog = QDialog()
+        dialog = QMessageBox()
+        dialog.setIcon(QMessageBox.Information)
         dialog.setWindowTitle("Operation Complete")
-        layout = QVBoxLayout()
-        label = QLabel()
-        label.setText(message)
-        label.setWordWrap(True)
-        layout.addWidget(label)
-        button = QPushButton("OK")
-        button.clicked.connect(dialog.close)
-        layout.addWidget(button)
-        dialog.setLayout(layout)
+        dialog.setText(message)
         dialog.exec_()
 
     def live2d_export(self):
@@ -245,8 +243,9 @@ class Live2DExporterExtension(Extension):
 
         visible_nodes = list(visibleTopLevelNodes(currentDoc))
         node_names = [n.name() for n in visible_nodes]
+
         if len(node_names) != len(set(node_names)):
-            self.showErrorWindow("Duplicate top-level layer names detected. Each top-level layer must have a unique name.")
+            self.showErrorWindow("Duplicate top-level layer names detected.")
             return
 
         if len(visible_nodes) == 0:
@@ -261,46 +260,41 @@ class Live2DExporterExtension(Extension):
                 try:
                     forFlatGroupLeafs(currentDoc, node, addGroupWithSameName)
                 except Exception as e:
-                    errors.append(f"Error grouping layers in '{node.name()}': {e}")
+                    errors.append(f"group ERROR '{node.name()}': {e}")
                     log(traceback.format_exc())
-
-            QApplication.processEvents()
 
             for node in visible_nodes:
                 try:
                     forFlatGroupLeafs(currentDoc, node, mergeLeaf)
                 except Exception as e:
-                    errors.append(f"Error merging layers in '{node.name()}': {e}")
+                    errors.append(f"merge ERROR '{node.name()}': {e}")
                     log(traceback.format_exc())
-
-            QApplication.processEvents()
 
             for node in visible_nodes:
                 try:
                     forLeafs(node, removeMergedSuffix)
                 except Exception as e:
-                    errors.append(f"Error cleaning names in '{node.name()}': {e}")
+                    errors.append(f"clean ERROR '{node.name()}': {e}")
                     log(traceback.format_exc())
-
-            QApplication.processEvents()
 
             for node in visible_nodes:
-                try:
-                    if save_as_psd(node):
-                        success_count += 1
-                    else:
-                        errors.append(f"Failed to export '{node.name()}'")
-                except Exception as e:
-                    errors.append(f"Error exporting '{node.name()}': {e}")
-                    log(traceback.format_exc())
+                out_dir = os.path.dirname(currentDoc.fileName()) or os.path.expanduser("~")
+                outfile = os.path.join(out_dir, node.name() + ".psd")
+                task = _SaveTask(currentDoc, node, outfile)
+                task.run()
 
-                QApplication.processEvents()
+                while not task.finished:
+                    QApplication.processEvents()
+
+                if task.success:
+                    success_count += 1
+                else:
+                    errors.append(f"export FAIL '{node.name()}'")
 
             currentDoc.setModified(False)
-            QApplication.processEvents()
 
         except Exception as e:
-            errors.append(f"Unexpected error: {e}")
+            errors.append(f"UNEXPECTED ERROR: {e}")
             log(traceback.format_exc())
 
         msg_parts = []
